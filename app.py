@@ -147,26 +147,37 @@ def cargar_listado_completo():
 
 
 def listado_a_dataframe(listado):
-    """Convierte el listado basico de la API en un DataFrame limpio."""
+    """
+    Convierte el listado basico de la API en un DataFrame limpio y tipado.
+
+    Transformaciones aplicadas:
+      - pd.to_datetime : conversion de FechaCierre a tipo datetime64
+      - pd.to_numeric  : conversion de dias_cierre a tipo numerico float64
+      - str.replace    : limpieza del prefijo 'Region' en nombres de region
+      - str.strip      : eliminacion de espacios en campos de texto
+    """
     registros = []
     for item in listado:
         codigo = item.get("CodigoExterno","")
-        nombre = item.get("Nombre","")
+        nombre = item.get("Nombre","").strip()   # str.strip: limpiar espacios
+
         # Extraer tipo del codigo (ej: "1003473-51-LP26" -> "LP")
         partes = codigo.split("-")
         tipo   = partes[-1][:2] if len(partes) >= 2 else ""
-        # Calcular dias al cierre
+
+        # Calcular dias al cierre usando pd.to_datetime
         fecha_cierre_str = item.get("FechaCierre")
         fecha_cierre = None
         dias_cierre  = None
         if fecha_cierre_str:
             try:
-                fecha_cierre = pd.to_datetime(fecha_cierre_str)
+                fecha_cierre = pd.to_datetime(fecha_cierre_str)    # pd.to_datetime
                 dias_cierre  = (fecha_cierre - pd.Timestamp.now()).days
                 if dias_cierre < 0:
                     dias_cierre = 0
             except Exception:
                 pass
+
         registros.append({
             "codigo":       codigo,
             "nombre":       nombre,
@@ -181,7 +192,22 @@ def listado_a_dataframe(listado):
                 f"DetailsAcquisition.aspx?idlicitacion={codigo}"
             ),
         })
-    return pd.DataFrame(registros)
+
+    df = pd.DataFrame(registros)
+
+    # pd.to_numeric: asegurar tipo numerico en dias_cierre
+    df["dias_cierre"] = pd.to_numeric(df["dias_cierre"], errors="coerce")
+
+    # str.replace: limpiar prefijos de region si vienen en detalle
+    if "region" in df.columns:
+        df["region_corta"] = (
+            df["region"]
+            .str.replace(r"Region (de la |de los |del |de |Metropolitana de )?",
+                         "", regex=True)
+            .str.strip()
+        )
+
+    return df
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
@@ -428,7 +454,12 @@ with tab2:
     if df_f.empty:
         st.warning("Sin datos para mostrar.")
     else:
-        # Metricas
+        # Metricas generales (st.metric directo para resumen rapido)
+        total_licit = len(df_f)
+        st.metric(label="Total licitaciones en el mercado", value=f"{total_licit:,}",
+                  help="Total de licitaciones activas segun filtros seleccionados")
+
+        # Metricas detalladas en columnas
         c1, c2, c3, c4 = st.columns(4)
         urgentes = len(df_f[df_f["urgencia"]=="Urgente"])
         proximas = len(df_f[df_f["urgencia"]=="Proximo"])
